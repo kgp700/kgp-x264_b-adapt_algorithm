@@ -1472,6 +1472,7 @@ void x264_slicetype_analyse( x264_t *h, int intra_minigop )
     x264_mb_analysis_t a;
     x264_frame_t *frames[X264_LOOKAHEAD_MAX+3] = { NULL, };
     int num_frames, orig_num_frames, keyint_limit, framecnt;
+    int i_mb_count = NUM_MBS;
     int i_max_search = X264_MIN( h->lookahead->next.i_size, X264_LOOKAHEAD_MAX );
     int vbv_lookahead = h->param.rc.i_vbv_buffer_size && h->param.rc.i_lookahead;
     /* For determinism we should limit the search to the number of frames lookahead has for sure
@@ -1578,7 +1579,6 @@ void x264_slicetype_analyse( x264_t *h, int intra_minigop )
         {
             int last_nonb = 0;
             int num_bframes = h->param.i_bframe;
-            char path[X264_LOOKAHEAD_MAX+1];
             for( int j = 1; j < num_frames; j++ )
             {
                 if( j-1 > 0 && IS_X264_TYPE_B( frames[j-1]->i_type ) )
@@ -1604,17 +1604,18 @@ void x264_slicetype_analyse( x264_t *h, int intra_minigop )
                     continue;
                 }
 
-                int bframes = j - last_nonb - 1;
-                memset( path, 'B', bframes );
-                strcpy( path+bframes, "PP" );
-                int cost_p = x264_slicetype_path_cost( h, &a, frames+last_nonb, path, COST_MAX );
-                strcpy( path+bframes, "BP" );
-                int cost_b = x264_slicetype_path_cost( h, &a, frames+last_nonb, path, cost_p );
 
-                if( cost_b < cost_p )
-                    frames[j]->i_type = X264_TYPE_B;
-                else
+
+                // arbitrary and untuned
+                #define INTER_THRESH 8700
+                #define P_SENS_BIAS (40 - h->param.i_bframe_bias)
+
+                int pthresh = X264_MAX(INTER_THRESH - P_SENS_BIAS * (j-last_nonb-1), INTER_THRESH/10);
+                int pcost = x264_slicetype_frame_cost( h, &a, frames, last_nonb, j+1, j+1 );
+                if( pcost+X264_LOOKAHEAD_MAX > pthresh*i_mb_count+COST_MAX || frames[j+1]->i_intra_mbs[j-last_nonb+1] > i_mb_count/3 )
                     frames[j]->i_type = X264_TYPE_P;
+                else
+                    frames[j]->i_type = X264_TYPE_B;
             }
         }
         else
